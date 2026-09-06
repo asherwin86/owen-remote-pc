@@ -1,0 +1,33 @@
+{
+  "name": "remote-desktop-host",
+  "version": "1.0.2",
+  "description": "Remote Desktop pilot — host app. Runs on the Windows machine being controlled: captures its screen + system audio, streams both over WebRTC to whoever connects with the pairing code, and injects the incoming remote mouse/keyboard events back into the real OS. Also runs the signaling server itself, so this one app is the only thing that needs to be launched.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win nsis portable"
+  },
+  "dependencies": {
+    "@nut-tree-fork/nut-js": "^4.2.6",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.mimigames.remotedesktop",
+    "productName": "Remote Desktop Host",
+    "files": ["main.js", "preload.js", "renderer.js", "index.html", "signaling.js", "viewer/**/*"],
+    "npmRebuild": false,
+    "win": {
+      "target": ["nsis", "portable"]
+    },
+    "nsis": {
+      "artifactName": "${productName}-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "${productName}-Portable-${version}.${ext}"
+    }
+  }
+}

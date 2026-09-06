@@ -1,0 +1,432 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Remote Desktop — Viewer</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: #0b0c10;
+    color: #f2f2f5;
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  #joinScreen {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 16px;
+    padding: 24px;
+  }
+  #joinScreen h1 { margin: 0 0 4px; font-size: 1.4rem; }
+  #joinScreen p { margin: 0; color: #9a9ba5; text-align: center; max-width: 340px; }
+  #codeInput {
+    font-size: 1.6rem;
+    letter-spacing: 0.25em;
+    text-align: center;
+    text-transform: uppercase;
+    width: 220px;
+    padding: 12px;
+    border-radius: 12px;
+    border: 1px solid #333644;
+    background: #16171e;
+    color: #f2f2f5;
+  }
+  #codeInput:focus { outline: none; border-color: #4f8cff; }
+  button {
+    font: inherit;
+    font-weight: 600;
+    padding: 12px 22px;
+    border-radius: 999px;
+    border: none;
+    background: #4f8cff;
+    color: white;
+    cursor: pointer;
+  }
+  button:hover { filter: brightness(1.1); }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  #status { color: #9a9ba5; font-size: 0.9rem; min-height: 1.3em; }
+  #status.error { color: #ff6b6b; }
+  #stageScreen { display: none; flex: 1; flex-direction: column; }
+  #stageScreen.active { display: flex; }
+  #joinScreen.hidden { display: none; }
+  #topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 14px;
+    background: #16171e;
+    border-bottom: 1px solid #26283a;
+    font-size: 0.85rem;
+    flex-shrink: 0;
+  }
+  #topbar button { padding: 6px 14px; font-size: 0.8rem; }
+  #videoWrap {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #000;
+    position: relative;
+    overflow: hidden;
+  }
+  #videoWrap:fullscreen { background: #000; }
+  #remoteVideo { max-width: 100%; max-height: 100%; cursor: none; }
+  #videoWrap:fullscreen #remoteVideo { width: 100%; height: 100%; object-fit: contain; }
+  #controlHint {
+    position: absolute;
+    bottom: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0,0,0,0.6);
+    padding: 6px 14px;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    color: #c8c9d4;
+    pointer-events: none;
+  }
+  #fpsDisplay {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    background: rgba(0,0,0,0.6);
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    color: #c8c9d4;
+    pointer-events: none;
+    font-variant-numeric: tabular-nums;
+  }
+  #fullscreenBtn {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    padding: 6px 12px;
+    font-size: 0.78rem;
+    font-weight: 500;
+    background: rgba(0,0,0,0.6);
+    color: #f2f2f5;
+    border: 1px solid rgba(255,255,255,0.15);
+  }
+  #fullscreenBtn:hover { background: rgba(0,0,0,0.8); filter: none; }
+</style>
+</head>
+<body>
+
+<div id="joinScreen">
+  <h1>Remote Desktop</h1>
+  <p>Enter the code shown on the host machine. Both devices need to be on the same network for this pilot.</p>
+  <input id="codeInput" maxlength="6" placeholder="CODE" autocomplete="off" autocapitalize="characters" />
+  <button id="joinBtn" type="button">Connect</button>
+  <p id="status"></p>
+</div>
+
+<div id="stageScreen">
+  <div id="topbar">
+    <span id="connStatus">Connecting…</span>
+    <div style="display:flex; gap:8px;">
+      <button id="micBtn" type="button">🎤 Mic Off</button>
+      <button id="disconnectBtn" type="button">Disconnect</button>
+    </div>
+  </div>
+  <div id="videoWrap">
+    <video id="remoteVideo" autoplay playsinline></video>
+    <span id="fpsDisplay"></span>
+    <button id="fullscreenBtn" type="button">⛶ Fullscreen</button>
+    <div id="controlHint">Click the screen to start sending your mouse/keyboard to the host</div>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  const joinScreen = document.getElementById("joinScreen");
+  const stageScreen = document.getElementById("stageScreen");
+  const codeInput = document.getElementById("codeInput");
+  const joinBtn = document.getElementById("joinBtn");
+  const statusEl = document.getElementById("status");
+  const connStatusEl = document.getElementById("connStatus");
+  const disconnectBtn = document.getElementById("disconnectBtn");
+  const remoteVideo = document.getElementById("remoteVideo");
+  const videoWrap = document.getElementById("videoWrap");
+  const controlHint = document.getElementById("controlHint");
+  const fpsDisplay = document.getElementById("fpsDisplay");
+  const fullscreenBtn = document.getElementById("fullscreenBtn");
+  const micBtn = document.getElementById("micBtn");
+
+  const RTC_CONFIG = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
+
+  let ws = null;
+  let pc = null;
+  let dataChannel = null;
+  let controlling = false;
+  let fpsTimer = null;
+  let lastFrameCount = 0;
+  let lastFrameSampleTime = 0;
+  let micStream = null;
+  let micTrack = null;
+
+  // Toggling the mic on/off after the initial connection is already up means
+  // renegotiating the existing peer connection rather than starting a new
+  // one — this "offer" is sent by the viewer this time, not the host, but
+  // the signaling server forwards either direction identically (see
+  // signaling-server/server.js), so the same message types work both ways.
+  async function renegotiate() {
+    if (!pc) return;
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    ws.send(JSON.stringify({ type: "offer", sdp: pc.localDescription }));
+  }
+
+  async function toggleMic() {
+    if (!pc) return;
+    if (micTrack) {
+      micStream.getTracks().forEach((t) => t.stop());
+      micTrack = null;
+      micStream = null;
+      micBtn.textContent = "🎤 Mic Off";
+      await renegotiate();
+      return;
+    }
+    micBtn.disabled = true;
+    try {
+      micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (e) {
+      connStatusEl.textContent = "Microphone access denied.";
+      micBtn.disabled = false;
+      return;
+    }
+    micTrack = micStream.getAudioTracks()[0];
+    pc.addTrack(micTrack, micStream);
+    micBtn.textContent = "🎤 Mic On";
+    micBtn.disabled = false;
+    await renegotiate();
+  }
+  micBtn.addEventListener("click", toggleMic);
+
+  // getVideoPlaybackQuality's frame count is the least intrusive way to get
+  // an incoming-fps reading — no extra data channel traffic, just samples
+  // what the browser already tracks once a second.
+  function startFpsCounter() {
+    stopFpsCounter();
+    if (!remoteVideo.getVideoPlaybackQuality) return;
+    lastFrameCount = remoteVideo.getVideoPlaybackQuality().totalVideoFrames;
+    lastFrameSampleTime = performance.now();
+    fpsTimer = setInterval(() => {
+      const quality = remoteVideo.getVideoPlaybackQuality();
+      const now = performance.now();
+      const dt = (now - lastFrameSampleTime) / 1000;
+      const delta = quality.totalVideoFrames - lastFrameCount;
+      fpsDisplay.textContent = (dt > 0 ? Math.round(delta / dt) : 0) + " fps";
+      lastFrameCount = quality.totalVideoFrames;
+      lastFrameSampleTime = now;
+    }, 1000);
+  }
+  function stopFpsCounter() {
+    if (fpsTimer) { clearInterval(fpsTimer); fpsTimer = null; }
+    fpsDisplay.textContent = "";
+  }
+
+  function updateFullscreenBtn() {
+    fullscreenBtn.textContent = document.fullscreenElement ? "⤢ Exit Fullscreen" : "⛶ Fullscreen";
+  }
+  fullscreenBtn.addEventListener("click", () => {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else videoWrap.requestFullscreen().catch(() => {});
+  });
+  document.addEventListener("fullscreenchange", updateFullscreenBtn);
+
+  function setStatus(text, isError) {
+    statusEl.textContent = text;
+    statusEl.className = isError ? "error" : "";
+  }
+
+  function wsUrl() {
+    const proto = location.protocol === "https:" ? "wss:" : "ws:";
+    return `${proto}//${location.host}/signal`;
+  }
+
+  function connect(code) {
+    ws = new WebSocket(wsUrl());
+    ws.addEventListener("open", () => {
+      ws.send(JSON.stringify({ type: "join", code }));
+    });
+    ws.addEventListener("message", (evt) => {
+      let msg;
+      try { msg = JSON.parse(evt.data); } catch (e) { return; }
+      handleSignal(msg);
+    });
+    ws.addEventListener("close", () => {
+      connStatusEl.textContent = "Disconnected from signaling server.";
+    });
+    ws.addEventListener("error", () => {
+      setStatus("Couldn't reach the signaling server.", true);
+    });
+  }
+
+  async function handleSignal(msg) {
+    if (msg.type === "join-error") {
+      setStatus(msg.reason || "Couldn't join.", true);
+      joinBtn.disabled = false;
+      ws.close();
+      return;
+    }
+    if (msg.type === "joined") {
+      joinScreen.classList.add("hidden");
+      stageScreen.classList.add("active");
+      connStatusEl.textContent = "Connected to signaling — waiting for the host's video…";
+      setupPeerConnection();
+      return;
+    }
+    if (msg.type === "offer") {
+      await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      ws.send(JSON.stringify({ type: "answer", sdp: pc.localDescription }));
+      return;
+    }
+    if (msg.type === "answer") {
+      // Reply to a renegotiation offer this viewer sent (e.g. the mic
+      // toggle) — the initial connection never reaches this branch, since
+      // the host sends the first offer and this side only ever answers it.
+      await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+      return;
+    }
+    if (msg.type === "ice-candidate" && msg.candidate) {
+      try { await pc.addIceCandidate(new RTCIceCandidate(msg.candidate)); } catch (e) { /* candidates can race the remote description; safe to drop */ }
+      return;
+    }
+    if (msg.type === "host-left") {
+      connStatusEl.textContent = "The host disconnected.";
+      teardownPeerConnection();
+      return;
+    }
+  }
+
+  function setupPeerConnection() {
+    pc = new RTCPeerConnection(RTC_CONFIG);
+
+    pc.addEventListener("track", (evt) => {
+      remoteVideo.srcObject = evt.streams[0];
+      connStatusEl.textContent = "Connected";
+      startFpsCounter();
+    });
+
+    pc.addEventListener("icecandidate", (evt) => {
+      if (evt.candidate) ws.send(JSON.stringify({ type: "ice-candidate", candidate: evt.candidate }));
+    });
+
+    pc.addEventListener("connectionstatechange", () => {
+      connStatusEl.textContent = "Connection: " + pc.connectionState;
+    });
+
+    // The host opens this channel (it's the offering side); the viewer just
+    // listens for it rather than creating its own, so there's exactly one
+    // channel per session.
+    pc.addEventListener("datachannel", (evt) => {
+      dataChannel = evt.channel;
+      dataChannel.addEventListener("open", () => { controlHint.textContent = "Click the screen to start sending your mouse/keyboard to the host"; });
+    });
+
+    setupInputForwarding();
+  }
+
+  function teardownPeerConnection() {
+    if (dataChannel) { dataChannel.close(); dataChannel = null; }
+    if (pc) { pc.close(); pc = null; }
+    remoteVideo.srcObject = null;
+    stopFpsCounter();
+    if (micStream) { micStream.getTracks().forEach((t) => t.stop()); micStream = null; micTrack = null; }
+    micBtn.textContent = "🎤 Mic Off";
+  }
+
+  function sendInput(payload) {
+    if (dataChannel && dataChannel.readyState === "open") dataChannel.send(JSON.stringify(payload));
+  }
+
+  // Coordinates are sent as a 0..1 fraction of the video's own displayed
+  // size, not raw pixels — the host maps that back to its real screen
+  // resolution, which is very unlikely to match the viewer's window size.
+  function videoRelativeCoords(evt) {
+    const rect = remoteVideo.getBoundingClientRect();
+    const x = (evt.clientX - rect.left) / rect.width;
+    const y = (evt.clientY - rect.top) / rect.height;
+    return { x: Math.min(1, Math.max(0, x)), y: Math.min(1, Math.max(0, y)) };
+  }
+
+  function setupInputForwarding() {
+    videoWrap.addEventListener("click", () => {
+      if (!controlling) {
+        controlling = true;
+        controlHint.textContent = "Sending your input to the host — press Esc to stop";
+      }
+    });
+
+    remoteVideo.addEventListener("mousemove", (evt) => {
+      if (!controlling) return;
+      const { x, y } = videoRelativeCoords(evt);
+      sendInput({ type: "mousemove", x, y });
+    });
+    remoteVideo.addEventListener("mousedown", (evt) => {
+      if (!controlling) return;
+      evt.preventDefault();
+      sendInput({ type: "mousedown", button: evt.button });
+    });
+    remoteVideo.addEventListener("mouseup", (evt) => {
+      if (!controlling) return;
+      sendInput({ type: "mouseup", button: evt.button });
+    });
+    remoteVideo.addEventListener("wheel", (evt) => {
+      if (!controlling) return;
+      evt.preventDefault();
+      sendInput({ type: "scroll", deltaX: evt.deltaX, deltaY: evt.deltaY });
+    }, { passive: false });
+    remoteVideo.addEventListener("contextmenu", (evt) => evt.preventDefault());
+
+    document.addEventListener("keydown", (evt) => {
+      if (!controlling) return;
+      if (evt.key === "Escape") {
+        controlling = false;
+        controlHint.textContent = "Click the screen to start sending your mouse/keyboard to the host";
+        return;
+      }
+      evt.preventDefault();
+      sendInput({ type: "keydown", key: evt.key, code: evt.code });
+    });
+    document.addEventListener("keyup", (evt) => {
+      if (!controlling) return;
+      evt.preventDefault();
+      sendInput({ type: "keyup", key: evt.key, code: evt.code });
+    });
+  }
+
+  joinBtn.addEventListener("click", () => {
+    const code = codeInput.value.trim().toUpperCase();
+    if (!code) { setStatus("Enter a code first.", true); return; }
+    setStatus("Connecting…");
+    joinBtn.disabled = true;
+    connect(code);
+  });
+  codeInput.addEventListener("keydown", (evt) => { if (evt.key === "Enter") joinBtn.click(); });
+
+  disconnectBtn.addEventListener("click", () => {
+    if (document.fullscreenElement) document.exitFullscreen();
+    teardownPeerConnection();
+    if (ws) ws.close();
+    stageScreen.classList.remove("active");
+    joinScreen.classList.remove("hidden");
+    joinBtn.disabled = false;
+    setStatus("");
+  });
+})();
+</script>
+</body>
+</html>
