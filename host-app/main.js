@@ -12,6 +12,7 @@ const path = require("path");
 const os = require("os");
 const { mouse, keyboard, Point, Button, Key } = require("@nut-tree-fork/nut-js");
 const { startSignalingServer } = require("./signaling");
+const { autoUpdater } = require("electron-updater");
 
 mouse.config.autoDelayMs = 0;
 keyboard.config.autoDelayMs = 0;
@@ -57,8 +58,26 @@ app.whenReady().then(async () => {
     serverInfo.error = e.message;
   }
   createWindow();
+
+  // checkForUpdatesAndNotify() throws in a dev run (no packaged app, no
+  // latest.yml to compare against) — only meaningful once this is an
+  // installed build checking GitHub Releases for a newer one.
+  if (app.isPackaged) {
+    autoUpdater.checkForUpdatesAndNotify().catch((e) => {
+      console.error("Update check failed:", e.message);
+    });
+  }
 });
 app.on("window-all-closed", () => app.quit());
+
+function sendUpdateStatus(text) {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("update-status", text);
+}
+autoUpdater.on("checking-for-update", () => sendUpdateStatus("Checking for updates…"));
+autoUpdater.on("update-available", (info) => sendUpdateStatus(`Downloading update ${info.version}…`));
+autoUpdater.on("update-not-available", () => sendUpdateStatus(""));
+autoUpdater.on("error", (e) => sendUpdateStatus("Update check failed: " + e.message));
+autoUpdater.on("update-downloaded", (info) => sendUpdateStatus(`Update ${info.version} ready — will install on restart.`));
 
 ipcMain.handle("get-server-info", () => serverInfo);
 

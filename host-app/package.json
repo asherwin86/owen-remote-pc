@@ -1,14 +1,16 @@
 {
   "name": "remote-desktop-host",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Remote Desktop pilot — host app. Runs on the Windows machine being controlled: captures its screen + system audio, streams both over WebRTC to whoever connects with the pairing code, and injects the incoming remote mouse/keyboard events back into the real OS. Also runs the signaling server itself, so this one app is the only thing that needs to be launched.",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --win nsis portable"
+    "dist": "electron-builder --win nsis portable",
+    "publish": "electron-builder --win nsis portable --publish always"
   },
   "dependencies": {
     "@nut-tree-fork/nut-js": "^4.2.6",
+    "electron-updater": "^6.3.9",
     "ws": "^8.18.0"
   },
   "devDependencies": {
@@ -20,6 +22,11 @@
     "productName": "Remote Desktop Host",
     "files": ["main.js", "preload.js", "renderer.js", "index.html", "signaling.js", "viewer/**/*"],
     "npmRebuild": false,
+    "publish": {
+      "provider": "github",
+      "owner": "asherwin86",
+      "repo": "owen-remote-pc"
+    },
     "win": {
       "target": ["nsis", "portable"]
     },

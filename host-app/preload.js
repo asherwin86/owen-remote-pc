@@ -9,4 +9,5 @@ contextBridge.exposeInMainWorld("hostAPI", {
   getScreenSize: () => ipcRenderer.invoke("get-screen-size"),
   injectInput: (cmd) => ipcRenderer.invoke("inject-input", cmd),
   getServerInfo: () => ipcRenderer.invoke("get-server-info"),
+  onUpdateStatus: (callback) => ipcRenderer.on("update-status", (_event, text) => callback(text)),
 });

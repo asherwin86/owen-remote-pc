@@ -14,6 +14,9 @@
   const linkDisplay = document.getElementById("linkDisplay");
   const statusEl = document.getElementById("status");
   const remoteMicAudio = document.getElementById("remoteMicAudio");
+  const updateStatusEl = document.getElementById("updateStatus");
+
+  window.hostAPI.onUpdateStatus((text) => { updateStatusEl.textContent = text; });
 
   const RTC_CONFIG = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
 
